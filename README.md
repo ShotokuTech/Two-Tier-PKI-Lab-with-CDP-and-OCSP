@@ -1,6 +1,8 @@
 # Two-Tier-PKI-Lab-with-CDP-and-OCSP
 Two Tier PKI Lab with CDP and OCSP Materials to support this video of the same name on YouTube
+
 ![Two-Tier-PKI-Lab-with-CDP-and-OCSP](https://github.com/ShotokuTech/Two-Tier-PKI-Lab-with-CDP-and-OCSP/blob/main/Thumb.jpg)
+https://youtu.be/7Nj_srYUhoU
 
 This is the two tier PKI lab demonstration. We have a standalone root CA, an issuing CA and a separate web server hosting the CDP and OCSP. Don't miss a moment, because there's lots of good stuff in this one.
 References:
