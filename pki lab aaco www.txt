@@ -1,0 +1,57 @@
+#WWW
+Install-WindowsFeature web-server,Adcs-Online-Cert -IncludeManagementTools
+Install-AdcsOnlineResponder -force
+
+md f:\pki
+New-SmbShare –Name pki –Path f:\pki -ReadAccess Everyone -ChangeAccess "AACO\cert publishers" -FullAccess Administrators -CachingMode None
+
+$Path = "f:\pki"
+$Acl = (Get-Item $Path).GetAccessControl('Access')
+$Username = "AACO\cert publishers"
+$Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($Username, 'Modify','ContainerInherit,ObjectInherit', 'None', 'Allow')
+$Acl.SetAccessRule($Ar)
+Set-Acl -path $Path -AclObject $Acl
+
+set-content f:\pki\index.html ""
+
+set-content f:\pki\cps.html ""
+
+
+<#
+in IIS:
+new virtual directory 'pki'
+enable directory browsing
+enable double escaping in request filtering
+/#>
+
+<#
+Completed steps in aaco rca and aaco ica
+pkiview? then ocsp? or vice-versa?
+#>
+
+<#
+Prepare cert template for OCSP signing
+ocsp template permissions include server or OCSP-Servers group account - read enroll auto
+enable template
+/#>
+
+<#
+get-netfirewallrule -displayname "Online Responder Service (DCOM-In)" | set-netfirewallrule -enabled 'True'
+get-netfirewallrule -displayname "Online Responder Service (RPC-In)" | set-netfirewallrule -enabled 'True'
+#>
+
+<#
+Complete revocation configuration in Online Responder Managment for both CAs. Check status in array configuration. Check status in pkiview.
+/#>
+
+<#
+troubleshoot ocsp in pkiview
+certutil –cainfo xchg
+restart-service certsvc
+certutil -crl
+#>
+
+<#
+Notes
+
+#>

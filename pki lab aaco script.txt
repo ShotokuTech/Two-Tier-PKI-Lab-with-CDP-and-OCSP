@@ -1,0 +1,351 @@
+<#variables
+root ca name: 
+aaco-root-ca
+
+issuing ca names:
+aaco-ca
+
+Site code for DCs:
+TUS
+
+Site prefix for servers
+TUS
+
+/#>
+
+<#Network
+netsh interface ip set address name="Ethernet" static 192.168.1.200 255.255.255.0 192.168.1.1 1
+netsh interface ip set dnsservers name="Ethernet" source=static address=
+netsh interface ip add dns "Ethernet" 192.168.1.1 index=1
+/#>
+
+<#Date/time
+/#>
+
+#
+#computer name
+#192.168.1.200
+rename-computer -newname TUS-DC1 -restart
+
+#192.168.1.201
+rename-computer -newname TUS-RCA1 -restart
+
+#192.168.1.202
+rename-computer -newname TUS-ICA1 -restart
+
+#192.168.1.203
+rename-computer -newname TUS-WWW1 -restart
+
+#Disk Drive Letters and Volume Names
+#CD Z:
+(gwmi Win32_cdromdrive).drive | %{$a = mountvol $_ /l;mountvol $_ /d;$a = $a.Trim();mountvol z: $a} 
+
+#mount and format F
+diskpart
+
+select disk 1
+online disk
+attributes disk clear readonly
+create partition primary
+assign letter=F
+exit
+
+echo y | format F: /FS:NTFS /Q
+
+function Set-DriveLabel($letter='C:', $label='ISOC-xxx1_C') {
+if (!(Test-Path $letter)) {
+Throw "Drive $letter does not exist."
+}
+$instance = ([wmi]"Win32_LogicalDisk='$letter'")
+$instance.VolumeName = $label
+$instance.Put()
+}
+set-drivelabel C: 'TUS-RCA1_C'
+set-drivelabel F: 'TUS-RCA1_F'
+
+#domain join
+add-computer -credential (get-credential aaco\administrator) -domainname aaco.local -passthru -verbose -restart
+
+#ADDS
+Install-WindowsFeature -name AD-Domain-Services,GPMC,DNS -IncludeManagementTools -Restart
+$restore = Read-Host 'SafeModeAdministratorPassword?' -AsSecureString
+import-module ADDSDeployment
+install-addsforest -DomainName aaco.local -DomainNetbiosName AACO -LogPath f:\NTDS -SysvolPath f:\SYSVOL -DatabasePath f:\NTDS -DomainMode Win2008R2 -ForestMode Win2008R2 -SafeModeAdministratorPassword $restore -force
+
+#ous, groups
+New-ADOrganizationalUnit -Name UserObjects
+New-ADOrganizationalUnit -Name ComputerObjects
+
+Get-ADComputer -Filter * -SearchBase "CN=Computers,DC=aaco,DC=local" | Move-ADObject -TargetPath "OU=ComputerObjects,DC=aaco,DC=local"
+
+New-ADOrganizationalUnit -Name SecurityGroups
+New-ADGroup -GroupScope Global -name OCSP-Servers -DisplayName OCSP-Servers -Path "OU=SecurityGroups,DC=aaco,DC=local"
+Add-ADGroupMember -Identity OCSP-Servers -Members TUS-WWW1$
+
+#New-aduser aaco.user
+
+#DNSCMD
+dnscmd TUS-DC1 /zoneadd aaco.com /DSPrimary
+dnscmd TUS-DC1 /recordadd aaco.com pki A 192.168.1.203
+
+
+<#references
+https://timothygruber.com/pki/deploy-a-pki-on-windows-server-2016-part-1
+http://myitworld.azurewebsites.net/2016/01/18/installing-two-tier-pki-hierarchy-windows-server-2016-part1/
+/#>
+
+#IIS
+Install-WindowsFeature web-server,Adcs-Online-Cert -IncludeManagementTools
+Install-AdcsOnlineResponder -force
+
+md f:\pki
+New-SmbShare –Name pki –Path f:\pki -ReadAccess Everyone -ChangeAccess "AACO\cert publishers" -CachingMode None
+
+$Path = "f:\pki"
+$Acl = (Get-Item $Path).GetAccessControl('Access')
+$Username = "AACO\cert publishers"
+$Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($Username, 'Modify','ContainerInherit,ObjectInherit', 'None', 'Allow')
+$Acl.SetAccessRule($Ar)
+Set-Acl -path $Path -AclObject $Acl
+
+set-content f:\pki\index.html
+
+set-content f:\pki\cps.html
+
+
+<#
+use compmgmt.msc to create pki share for f:\pki, no offline files, permissions for cert publishers change/modify
+create blank index.html and cps.html files in f:pki
+new virtual directory 'pki'
+enable directory browsing
+enable double escaping in request filtering
+/#>
+
+
+#Root CA
+<#C:\Windows\CAPolicy.inf
+[Version]
+Signature=”$Windows NT$”
+[Certsrv_Server]
+RenewalKeyLength=2048
+RenewalValidityPeriod=Years
+RenewalValidityPeriodUnits=20
+CRLPeriod=Years
+CRLPeriodUnits=20
+CRLDeltaPeriod=Days
+CRLDeltaPeriodUnits=0
+LoadDefaultTemplates=0
+/#>
+
+set-content C:\Windows\CAPolicy.inf '[Version]'
+add-content C:\Windows\CAPolicy.inf 'Signature="$Windows NT$"'
+add-content C:\Windows\CAPolicy.inf '[Certsrv_Server]'
+add-content C:\Windows\CAPolicy.inf 'RenewalKeyLength=2048'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriodUnits=20'
+add-content C:\Windows\CAPolicy.inf 'CRLPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'CRLPeriodUnits=20'
+add-content C:\Windows\CAPolicy.inf 'CRLDeltaPeriod=Days'
+add-content C:\Windows\CAPolicy.inf 'CRLDeltaPeriodUnits=0'
+add-content C:\Windows\CAPolicy.inf 'LoadDefaultTemplates=0'
+
+Add-WindowsFeature Adcs-Cert-Authority -IncludeManagementTools
+Install-AdcsCertificationAuthority -CAType StandaloneRootCA -CACommonName "AACO-ROOT-CA" -KeyLength 2048 -HashAlgorithm SHA256 -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" -ValidityPeriod Years -ValidityPeriodUnits 20 -DatabaseDirectory "F:\CertLog" -LogDirectory "F:\CertLog" -Force
+
+$crllist = Get-CACrlDistributionPoint
+foreach ($crl in $crllist) {Remove-CACrlDistributionPoint $crl.uri -Force}
+Add-CACRLDistributionPoint -Uri C:\Windows\System32\CertSrv\CertEnroll\AACO-ROOT-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+
+Add-CACRLDistributionPoint -Uri http://pki.aaco.com/pki/AACO-ROOT-CA%8%9.crl -AddToCertificateCDP -AddToFreshestCrl -Force
+
+Get-CAAuthorityInformationAccess | where {$_.Uri -like '*ldap*' -or $_.Uri -like '*http*' -or $_.Uri -like '*file*'} | Remove-CAAuthorityInformationAccess -Force
+
+#Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/AACO-ROOT-CA%3%4.crt -Force
+
+#See doc of screenshots that had bad stuff
+#Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/AACO-ROOT-CA%4.crt -Force
+
+Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/%1_%3%4.crt -Force
+
+certutil.exe –setreg CA\CRLPeriodUnits 20
+ #missed this in lab which is why there is a CDP that expires 11 sept
+certutil.exe –setreg CA\CRLPeriod "Years" #missed this in lab which is why there is a CDP that expires 11 sept
+certutil.exe –setreg CA\CRLOverlapPeriodUnits 3
+
+certutil.exe –setreg CA\CRLOverlapPeriod "Weeks"
+certutil.exe –setreg CA\ValidityPeriodUnits 5
+ #lifetime for issuing CA certs, 10 or 20?
+certutil.exe –setreg CA\ValidityPeriod "Years"
+certutil.exe -setreg CA\AuditFilter 127
+
+#Restart-Service certsvc
+
+#Make sure GPO/local policy audit settings are set to "Enable Audit Object Access for Success and/or Failure"
+
+certutil.exe -setreg CA\DSConfigDN "CN=Configuration,DC=aaco,DC=local"
+certutil.exe -setreg CA\DSDomainDN "DC=aaco,DC=local"
+
+Restart-Service certsvc
+
+#wait for service to start
+certutil -crl
+
+explorer.exe c:\windows\system32\certsrv\certenroll
+
+<#
+copy crt and crl to www f:\pki and ica f:
+/#>
+
+#Enterprise CA
+#Need to look at crl timetables
+<#C:\Windows\CAPolicy.inf
+[Version]
+Signature=”$Windows NT$”
+[Certsrv_Server]
+RenewalKeyLength=2048
+RenewalValidityPeriod=Years
+RenewalValidityPeriodUnits=5
+LoadDefaultTemplates=0
+/#>
+
+set-content C:\Windows\CAPolicy.inf '[Version]'
+add-content C:\Windows\CAPolicy.inf 'Signature="$Windows NT$"'
+add-content C:\Windows\CAPolicy.inf '[Certsrv_Server]'
+add-content C:\Windows\CAPolicy.inf 'RenewalKeyLength=2048'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriodUnits=5'
+add-content C:\Windows\CAPolicy.inf 'LoadDefaultTemplates=0'
+
+<#Add root to local store on ica
+certutil -addstore -f root "F:\TUS-RCA1_AACO-ROOT-CA.crt"
+certutil -addstore -f root "F:\AACO-ROOT-CA.crl"
+
+Add-WindowsFeature Adcs-Cert-Authority,ADCS-Web-Enrollment -IncludeManagementTools
+Install-AdcsCertificationAuthority -CAType EnterpriseSubordinateCA -CACommonName "AACO-CA" -KeyLength 2048 -HashAlgorithm SHA256 -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" -DatabaseDirectory "F:\CertLog" -LogDirectory "F:\CertLog" -Force -OutputCertRequestFile F:\TUS-ICA1.req
+
+<#
+use the req file to obtain cert for ica
+install root cert in trusted root
+install ca cert
+/#>
+
+$crllist = Get-CACrlDistributionPoint; foreach ($crl in $crllist) {Remove-CACrlDistributionPoint $crl.uri -Force}
+
+Add-CACRLDistributionPoint -Uri C:\Windows\System32\CertSrv\CertEnroll\AACO-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+
+Add-CACRLDistributionPoint -Uri file://\\pki.aaco.com\pki\AACO-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+
+#Add-CACRLDistributionPoint -Uri file://\\TUS-WWW1.aaco.local\pki\AACO-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+
+Add-CACRLDistributionPoint -Uri http://pki.aaco.com/pki/AACO-CA%8%9.crl -AddToCertificateCDP -AddToFreshestCrl -Force
+
+Get-CAAuthorityInformationAccess | where {$_.Uri -like '*ldap*' -or $_.Uri -like '*http*' -or $_.Uri -like '*file*'} | Remove-CAAuthorityInformationAccess -Force
+
+Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/%1_%3%4.crt -Force
+
+Add-CAAuthorityInformationAccess -AddToCertificateOcsp -Uri http://pki.aaco.com/ocsp -force
+certutil.exe -setreg CA\CRLPeriodUnits 2
+
+certutil.exe -setreg CA\CRLPeriod "Weeks"
+
+certutil.exe -setreg CA\CRLDeltaPeriodUnits 1
+
+certutil.exe -setreg CA\CRLDeltaPeriod "Days"
+
+certutil.exe -setreg CA\CRLOverlapPeriodUnits 12
+
+certutil.exe -setreg CA\CRLOverlapPeriod "Hours"
+
+certutil.exe -setreg CA\ValidityPeriodUnits 5
+
+certutil.exe -setreg CA\ValidityPeriod "Years"
+
+certutil.exe -setreg CA\AuditFilter 127
+
+restart-service certsvc
+
+#Make sure GPO/local policy audit settings are set to "Enable Audit Object Access for Success and/or Failure"
+
+explorer.exe c:\windows\system32\certsrv\certenroll
+
+<#
+copy crl and crt to www f:\pki
+/#>
+
+<#
+complete the setup of the web enrollment feature on TUS-ICA1
+#>
+
+#OCSP
+<#references
+https://social.technet.microsoft.com/wiki/contents/articles/15037.ad-cs-step-by-step-guide-two-tier-pki-hierarchy-deployment.aspx?PageIndex=3
+<http://www.tech-coffee.net/public-key-infrastructure-part-1-introduction-encryption-signature/>
+/#>
+
+<#
+Prepare cert template for OCSP signing
+ocsp template permissions include server or OCSP-Servers group account - read enroll auto
+enable template
+/#>
+
+#ADD AIA on TUS-ICA1
+Add-CAAuthorityInformationAccess -AddToCertificateOcsp -Uri http://pki.aaco.com/ocsp
+
+#Install OCSP on TUS-WWW1
+Add-WindowsFeature Adcs-Online-Cert -IncludeManagementTools
+Install-AdcsOnlineResponder
+#enable incoming online responder service  rules in windows firewall
+<#Complete revocation configuration in Online Responder Managment for both CAs. Check status in array configuration. Check status in pkiview.
+/#>
+
+get-netfirewallrule -displayname "Online Responder Service (DCOM-In)" | set-netfirewallrule -enabled 'True'
+get-netfirewallrule -displayname "Online Responder Service (RPC-In)" | set-netfirewallrule -enabled 'True'
+
+#second ocsp
+Add-WindowsFeature Adcs-Online-Cert -IncludeManagementTools
+Install-AdcsOnlineResponder
+#enable incoming online responder service  rules in windows firewall
+
+get-netfirewallrule -displayname "Online Responder Service (DCOM-In)" | set-netfirewallrule -enabled 'True'
+get-netfirewallrule -displayname "Online Responder Service (RPC-In)" | set-netfirewallrule -enabled 'True'
+
+<#
+in Online Responder Managment on WWW1, under array configuration, set www01 as array controller, add array member and enter www2
+OCSP array members can be synced and managed from this single Online Responder Managment console
+/#>
+
+<#test
+#certutil -url 
+#append service url and source from recent certificate test aia cdp and ocsp
+certutil -url http://pki.aaco.com/ocsp
+/#>
+
+<#pkiview ocsp error
+After CA configuration you may have to do refresh OCSP URL in PKIView.msc MMC snap-in. To do this, revoke the most recent CA Exchange certificate and in Command Prompt run the following command:
+certutil –cainfo xchg
+restart-service certsvc
+certutil -crl
+/#>
+
+<#misc
+manage certs, specifically gpos for root and issueing, gpos for autoenroll, cert for server/client authentication
+
+Get-WindowsFeature | Export-Csv -path output.csv
+
+Get-WindowsFeature -name web-server | fl -property *
+/#>
+
+<#not really sure on these? ignore. use gpo instead
+#certutil.exe –dsPublish –f "F:\TUS-RCA1_AACO-ROOT-CA.crt" RootCA
+#certutil.exe -dsPublish -f "C:\AACO-ROOT-CA.crl" RootCA
+/#>
+
+<#changelog
+#turn off server manager
+get-scheduledtask -taskname servermanager | disable-scheduledtask -verbose
+New-ItemProperty -Path HKCU:\Software\Microsoft\ServerManager -Name DoNotOpenServerManagerAtLogon -PropertyType DWORD -Value "0x1" –Force
+#folder and search options
+ie security config
+#ipv6
+sysprep oob shut down
+/#>

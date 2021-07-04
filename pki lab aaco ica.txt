@@ -1,0 +1,53 @@
+#Enterprise CA
+
+set-content C:\Windows\CAPolicy.inf '[Version]'
+add-content C:\Windows\CAPolicy.inf 'Signature="$Windows NT$"'
+add-content C:\Windows\CAPolicy.inf '[Certsrv_Server]'
+add-content C:\Windows\CAPolicy.inf 'RenewalKeyLength=2048'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriodUnits=5'
+add-content C:\Windows\CAPolicy.inf 'LoadDefaultTemplates=0'
+
+#Add root to local store on ica
+certutil -addstore -f root "F:\TUS-RCA1_AACO-ROOT-CA.crt"
+certutil -addstore -f root "F:\AACO-ROOT-CA.crl"
+
+Add-WindowsFeature Adcs-Cert-Authority,ADCS-Web-Enrollment -IncludeManagementTools
+Install-AdcsCertificationAuthority -CAType EnterpriseSubordinateCA -CACommonName "AACO-CA" -KeyLength 2048 -HashAlgorithm SHA256 -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" -DatabaseDirectory "F:\CertLog" -LogDirectory "F:\CertLog" -Force -OutputCertRequestFile F:\TUS-ICA1.req
+
+<#
+use the req file to obtain cert for ica
+install root cert in trusted root
+install ca cert
+/#>
+
+$crllist = Get-CACrlDistributionPoint; foreach ($crl in $crllist) {Remove-CACrlDistributionPoint $crl.uri -Force}
+Add-CACRLDistributionPoint -Uri C:\Windows\System32\CertSrv\CertEnroll\AACO-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+Add-CACRLDistributionPoint -Uri file://\\TUS-WWW1.aaco.local\pki\AACO-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+Add-CACRLDistributionPoint -Uri http://pki.aaco.com/pki/AACO-CA%8%9.crl -AddToCertificateCDP -AddToFreshestCrl -Force
+Get-CAAuthorityInformationAccess | where {$_.Uri -like '*ldap*' -or $_.Uri -like '*http*' -or $_.Uri -like '*file*'} | Remove-CAAuthorityInformationAccess -Force
+Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/%1_%3%4.crt -Force
+Add-CAAuthorityInformationAccess -AddToCertificateOcsp -Uri http://pki.aaco.com/ocsp -force
+certutil.exe -setreg CA\CRLPeriodUnits 2
+certutil.exe -setreg CA\CRLPeriod "Weeks"
+certutil.exe -setreg CA\CRLDeltaPeriodUnits 1
+certutil.exe -setreg CA\CRLDeltaPeriod "Days"
+certutil.exe -setreg CA\CRLOverlapPeriodUnits 12
+certutil.exe -setreg CA\CRLOverlapPeriod "Hours"
+certutil.exe -setreg CA\ValidityPeriodUnits 5
+certutil.exe -setreg CA\ValidityPeriod "Years"
+certutil.exe -setreg CA\AuditFilter 127
+restart-service certsvc
+
+certutil -crl
+
+explorer.exe c:\windows\system32\certsrv\certenroll
+
+<#
+copy crl and crt to www1 f:\pki
+/#>
+
+<#
+complete the setup of the web enrollment feature on tus-ica1
+#>
+

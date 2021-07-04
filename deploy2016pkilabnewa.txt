@@ -1,0 +1,39 @@
+﻿$vms = "TUS-DC1","TUS-RCA1","TUS-ICA1","TUS-WWW1"
+
+foreach($vm in $vms){
+$path = "D:\Hyper-V\" + $vm + "\Virtual Hard Disks\"
+md $path
+New-VHD -ParentPath "D:\Hyper-V\base2016\Virtual Hard Disks\base2016.vhdx" -Path ($path + "\" + $vm + ".vhdx") -Differencing
+}
+foreach($vm in $vms){
+#$path = "D:\Hyper-V\Virtual Machines\"
+$path = "D:\Hyper-V\"
+$target = "D:\Hyper-V\" + $vm + "\Virtual Hard Disks\" + $vm + ".vhdx"
+new-vm -name $vm -MemoryStartupBytes 1GB -Path $path -VHDPath $target -generation 1 -SwitchName LAN
+Set-VMMemory $vm -DynamicMemoryEnabled $true -MinimumBytes 1GB -StartupBytes 1GB -MaximumBytes 4GB -Priority 50 -Buffer 20
+$dpath = "D:\Hyper-V\" + $vm + "\Virtual Hard Disks\" + $vm + "_1.vhdx"
+new-vhd -Path $dpath -SizeBytes 107374182400 -dynamic
+Add-VMHardDiskDrive -ControllerType SCSI -Path $dpath -VMname $vm
+#Start-VM $vm
+}
+
+
+$vms = "Win10a","Win10b"
+
+foreach($vm in $vms){
+$path = "D:\Hyper-V\" + $vm + "\Virtual Hard Disks\"
+md $path
+New-VHD -ParentPath "D:\Hyper-V\base10\Virtual Hard Disks\base10.vhdx" -Path ($path + "\" + $vm + ".vhdx") -Differencing
+}
+foreach($vm in $vms){
+#$path = "D:\Hyper-V\Virtual Machines\"
+$path = "D:\Hyper-V\"
+$target = "D:\Hyper-V\" + $vm + "\Virtual Hard Disks\" + $vm + ".vhdx"
+new-vm -name $vm -MemoryStartupBytes 1GB -Path $path -VHDPath $target -generation 1 -SwitchName LAN
+Set-VMMemory $vm -DynamicMemoryEnabled $true -MinimumBytes 1GB -StartupBytes 1GB -MaximumBytes 4GB -Priority 50 -Buffer 20
+$dpath = "D:\Hyper-V\" +$vm + "\Virtual Hard Disks\" + $vm + "_1.vhdx"
+new-vhd -Path $dpath -SizeBytes 107374182400 -dynamic
+Add-VMHardDiskDrive -ControllerType SCSI -Path $dpath -VMname $vm
+#Start-VM $vm
+}
+

@@ -1,0 +1,29 @@
+netsh interface ip set address name="Ethernet" static 192.168.1.201 255.255.255.0 192.168.1.1 1
+netsh interface ip set dnsservers name="Ethernet" source=static address=
+netsh interface ip add dns "Ethernet" 192.168.1.1 index=1
+
+(gwmi Win32_cdromdrive).drive | %{$a = mountvol $_ /l;mountvol $_ /d;$a = $a.Trim();mountvol z: $a} 
+
+diskpart
+
+select disk 1
+online disk
+attributes disk clear readonly
+create partition primary
+assign letter=F
+exit
+
+echo y | format F: /FS:NTFS /Q
+
+function Set-DriveLabel($letter='C:', $label='ISOC-GDC0_C') {
+if (!(Test-Path $letter)) {
+Throw "Drive $letter does not exist."
+}
+$instance = ([wmi]"Win32_LogicalDisk='$letter'")
+$instance.VolumeName = $label
+$instance.Put()
+}
+set-drivelabel C: 'TUS-RCA1_C'
+set-drivelabel F: 'TUS-RCA1_F'
+
+rename-computer -newname TUS-RCA1 -restart

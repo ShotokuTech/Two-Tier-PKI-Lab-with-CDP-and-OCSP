@@ -1,0 +1,59 @@
+#Root CA
+<#C:\Windows\CAPolicy.inf
+[Version]
+Signature=”$Windows NT$”
+[Certsrv_Server]
+RenewalKeyLength=2048
+RenewalValidityPeriod=Years
+RenewalValidityPeriodUnits=20
+CRLPeriod=Years
+CRLPeriodUnits=20
+CRLDeltaPeriod=Days
+CRLDeltaPeriodUnits=0
+LoadDefaultTemplates=0
+/#>
+
+set-content C:\Windows\CAPolicy.inf '[Version]'
+add-content C:\Windows\CAPolicy.inf 'Signature="$Windows NT$"'
+add-content C:\Windows\CAPolicy.inf '[Certsrv_Server]'
+add-content C:\Windows\CAPolicy.inf 'RenewalKeyLength=2048'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'RenewalValidityPeriodUnits=20'
+add-content C:\Windows\CAPolicy.inf 'CRLPeriod=Years'
+add-content C:\Windows\CAPolicy.inf 'CRLPeriodUnits=20'
+add-content C:\Windows\CAPolicy.inf 'CRLDeltaPeriod=Days'
+add-content C:\Windows\CAPolicy.inf 'CRLDeltaPeriodUnits=0'
+add-content C:\Windows\CAPolicy.inf 'LoadDefaultTemplates=0'
+
+Add-WindowsFeature Adcs-Cert-Authority -IncludeManagementTools
+Install-AdcsCertificationAuthority -CAType StandaloneRootCA -CACommonName "AACO-ROOT-CA" -KeyLength 2048 -HashAlgorithm SHA256 -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" -ValidityPeriod Years -ValidityPeriodUnits 20 -DatabaseDirectory "F:\CertLog" -LogDirectory "F:\CertLog" -Force
+
+$crllist = Get-CACrlDistributionPoint
+foreach ($crl in $crllist) {Remove-CACrlDistributionPoint $crl.uri -Force}
+Add-CACRLDistributionPoint -Uri C:\Windows\System32\CertSrv\CertEnroll\AACO-ROOT-CA%8%9.crl -PublishToServer -PublishDeltaToServer -Force
+Add-CACRLDistributionPoint -Uri http://pki.aaco.com/pki/AACO-ROOT-CA%8%9.crl -AddToCertificateCDP -AddToFreshestCrl -Force
+Get-CAAuthorityInformationAccess | where {$_.Uri -like '*ldap*' -or $_.Uri -like '*http*' -or $_.Uri -like '*file*'} | Remove-CAAuthorityInformationAccess -Force
+Add-CAAuthorityInformationAccess -AddToCertificateAia http://pki.aaco.com/pki/%1_%3%4.crt -Force
+certutil.exe –setreg CA\CRLPeriodUnits 20
+certutil.exe –setreg CA\CRLPeriod "Years"
+certutil.exe –setreg CA\CRLOverlapPeriodUnits 3
+certutil.exe –setreg CA\CRLOverlapPeriod "Weeks"
+certutil.exe –setreg CA\ValidityPeriodUnits 5
+certutil.exe –setreg CA\ValidityPeriod "Years"
+certutil.exe -setreg CA\AuditFilter 127
+certutil.exe -setreg CA\DSConfigDN "CN=Configuration,DC=aaco,DC=local"
+certutil.exe -setreg CA\DSDomainDN "DC=aaco,DC=local"
+Restart-Service certsvc
+
+#Make sure GPO/local policy audit settings are set to "Enable Audit Object Access for Success and/or Failure"
+
+
+#wait for service to start
+certutil -crl
+
+explorer.exe c:\windows\system32\certsrv\certenroll
+
+<#
+copy crt and crl to www f:\pki and ica f:
+/#>
+
