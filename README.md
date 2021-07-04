@@ -2,6 +2,7 @@
 Two Tier PKI Lab with CDP and OCSP Materials to support this video of the same name on YouTube
 
 https://youtu.be/7Nj_srYUhoU
+
 ![Two-Tier-PKI-Lab-with-CDP-and-OCSP](https://github.com/ShotokuTech/Two-Tier-PKI-Lab-with-CDP-and-OCSP/blob/main/Thumb.jpg)
 
 
